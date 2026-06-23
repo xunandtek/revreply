@@ -28,6 +28,11 @@ class GmailController extends Controller
         return $this->gmailService->callback($request);
     }
 
+    public function accounts(): JsonResponse
+    {
+        return $this->gmailService->accounts();
+    }
+
     public function sync(GmailAccount $gmailAccount): JsonResponse
     {
         return $this->gmailService->sync($gmailAccount);

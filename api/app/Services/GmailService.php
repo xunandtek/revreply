@@ -113,6 +113,25 @@ class GmailService
         ]);
     }
 
+    public function accounts(): JsonResponse
+    {
+        return response()->json([
+            'data' => GmailAccount::query()
+                ->orderByDesc('last_synced_at')
+                ->orderByDesc('id')
+                ->get([
+                    'id',
+                    'google_email',
+                    'display_name',
+                    'sync_status',
+                    'token_expires_at',
+                    'last_synced_at',
+                    'last_error_code',
+                    'last_error_message',
+                ]),
+        ]);
+    }
+
     public function sync(GmailAccount $gmailAccount): JsonResponse
     {
         if (! filled($gmailAccount->access_token)) {
