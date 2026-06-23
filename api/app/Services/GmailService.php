@@ -6,6 +6,8 @@ use App\Models\GmailAccount;
 use App\Models\GmailMessage;
 use App\Models\GmailThread;
 use App\Models\ReplyDraft;
+use App\Services\DraftGenerationService;
+use App\Services\ThreadClassifierService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -19,6 +21,12 @@ use Throwable;
 
 class GmailService
 {
+    public function __construct(
+        private readonly ThreadClassifierService $threadClassifierService,
+        private readonly DraftGenerationService $draftGenerationService,
+    ) {
+    }
+
     public function connect(): Response
     {
         if (! $this->hasGoogleOauthConfig()) {
@@ -183,11 +191,27 @@ class GmailService
 
     public function updateDraft(Request $request, ReplyDraft $replyDraft): JsonResponse
     {
+        $validated = $request->validate([
+            'draft_subject' => ['nullable', 'string', 'max:255'],
+            'draft_body' => ['nullable', 'string'],
+            'status' => ['nullable', 'in:generated,edited,approved'],
+        ]);
+
+        $status = $validated['status'] ?? 'edited';
+
+        $replyDraft->fill([
+            'draft_subject' => $validated['draft_subject'] ?? $replyDraft->draft_subject,
+            'draft_body' => $validated['draft_body'] ?? $replyDraft->draft_body,
+            'status' => $status,
+            'approved_at' => $status === 'approved' ? now() : null,
+        ]);
+
+        $replyDraft->save();
+
         return response()->json([
-            'message' => 'Draft updates are not wired yet.',
-            'draft_id' => $replyDraft->id,
-            'payload' => $request->all(),
-        ], 501);
+            'message' => 'Draft updated successfully.',
+            'data' => $replyDraft->fresh(),
+        ]);
     }
 
     private function hasGoogleOauthConfig(): bool
@@ -316,7 +340,19 @@ class GmailService
             );
         });
 
-        return $gmailThread->load('messages');
+        $gmailThread->load(['messages' => fn ($query) => $query->orderByDesc('gmail_received_at')]);
+
+        $classification = $this->threadClassifierService->classify($gmailThread);
+
+        $gmailThread->forceFill([
+            'classification' => $classification['label'],
+            'classification_confidence' => $classification['confidence'],
+            'classification_reason' => $classification['reason'],
+        ])->save();
+
+        $this->upsertDraft($gmailAccount, $gmailThread);
+
+        return $gmailThread->load(['messages', 'drafts']);
     }
 
     private function normalizeMessage(array $message): array
@@ -448,5 +484,30 @@ class GmailService
     {
         return Http::withToken($gmailAccount->access_token)
             ->acceptJson();
+    }
+
+    private function upsertDraft(GmailAccount $gmailAccount, GmailThread $gmailThread): void
+    {
+        $latestMessage = $gmailThread->messages->sortByDesc('gmail_received_at')->first();
+
+        if (! $latestMessage instanceof GmailMessage) {
+            return;
+        }
+
+        $draft = $this->draftGenerationService->generate($gmailThread, $latestMessage);
+
+        ReplyDraft::query()->updateOrCreate(
+            [
+                'gmail_account_id' => $gmailAccount->id,
+                'gmail_thread_id' => $gmailThread->id,
+                'gmail_message_id' => $latestMessage->id,
+            ],
+            [
+                'draft_subject' => $draft['draft_subject'],
+                'draft_body' => $draft['draft_body'],
+                'status' => $draft['status'],
+                'generation_source' => $draft['generation_source'],
+            ],
+        );
     }
 }
