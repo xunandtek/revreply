@@ -9,6 +9,7 @@ use App\Models\ReplyDraft;
 use App\Services\GmailService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Symfony\Component\HttpFoundation\Response;
 
 class GmailController extends Controller
 {
@@ -17,14 +18,14 @@ class GmailController extends Controller
     ) {
     }
 
-    public function connect(): JsonResponse
+    public function connect(): Response
     {
         return $this->gmailService->connect();
     }
 
-    public function callback(): JsonResponse
+    public function callback(Request $request): Response
     {
-        return $this->gmailService->callback();
+        return $this->gmailService->callback($request);
     }
 
     public function sync(GmailAccount $gmailAccount): JsonResponse
